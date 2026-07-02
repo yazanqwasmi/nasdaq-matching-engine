@@ -46,6 +46,12 @@ target_link_libraries(nsq_soup PUBLIC nsq_common)
 add_library(nsq_mold STATIC src/mold/mold.cpp)
 target_link_libraries(nsq_mold PUBLIC nsq_common)
 
+add_library(nsq_engine STATIC src/engine/engine.cpp)
+target_link_libraries(nsq_engine PUBLIC nsq_book)
+
+add_library(nsq_gateway STATIC src/gateway/gateway.cpp)
+target_link_libraries(nsq_gateway PUBLIC nsq_engine nsq_soup)
+
 add_executable(demo src/apps/demo.cpp)
 target_link_libraries(demo PRIVATE nsq_book)
 
