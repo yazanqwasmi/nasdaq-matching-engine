@@ -6,11 +6,13 @@
 
 #include "common/queue.hpp"
 #include "engine/engine.hpp"
+#include "feed/capture.hpp"
 #include "mold/mold.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -31,6 +33,9 @@ struct FeedConfig {
   // Interface for outgoing multicast; loopback lets a same-host listener
   // receive the feed.
   std::string mcast_if_ip = "127.0.0.1";
+  // When non-empty, every outgoing datagram is teed to this capture file
+  // (see feed/capture.hpp; replayable with itchreplay).
+  std::string capture_path;
 };
 
 class FeedPublisher {
@@ -56,6 +61,7 @@ class FeedPublisher {
   int fd_ = -1;
   mold::Packetizer packetizer_;
   std::map<Symbol, std::uint16_t> locates_;
+  std::unique_ptr<CaptureWriter> capture_;
   std::atomic<std::uint64_t> packets_sent_{0};
   std::thread thread_;
 };

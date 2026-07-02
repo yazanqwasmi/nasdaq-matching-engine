@@ -52,7 +52,7 @@ target_link_libraries(nsq_engine PUBLIC nsq_book)
 add_library(nsq_gateway STATIC src/gateway/gateway.cpp)
 target_link_libraries(nsq_gateway PUBLIC nsq_engine nsq_soup)
 
-add_library(nsq_feed STATIC src/feed/feed.cpp)
+add_library(nsq_feed STATIC src/feed/feed.cpp src/feed/capture.cpp)
 target_link_libraries(nsq_feed PUBLIC nsq_engine nsq_mold)
 
 add_library(nsq_client STATIC src/client/itch_book.cpp src/client/ouch_client.cpp)
@@ -75,6 +75,9 @@ target_link_libraries(marketsim PRIVATE nsq_client)
 
 add_executable(itchview src/apps/itchview.cpp)
 target_link_libraries(itchview PRIVATE nsq_client)
+
+add_executable(itchreplay src/apps/itchreplay.cpp)
+target_link_libraries(itchreplay PRIVATE nsq_feed)
 
 enable_testing()
 add_subdirectory(tests)

@@ -1,5 +1,6 @@
 #include "feed/feed.hpp"
 
+#include "common/clock.hpp"
 #include "itch/itch.hpp"
 
 #include <arpa/inet.h>
@@ -85,6 +86,9 @@ FeedPublisher::FeedPublisher(MpscQueue<engine::MarketEvent>& in,
   fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
   if (fd_ < 0) throw std::runtime_error("feed socket() failed");
 
+  if (!cfg_.capture_path.empty())
+    capture_ = std::make_unique<CaptureWriter>(cfg_.capture_path);
+
   in_addr dest{};
   if (::inet_pton(AF_INET, cfg_.dest_ip.c_str(), &dest) != 1)
     throw std::runtime_error("bad feed dest ip");
@@ -147,6 +151,7 @@ void FeedPublisher::send_datagram(const std::vector<std::uint8_t>& bytes) {
   ::inet_pton(AF_INET, cfg_.dest_ip.c_str(), &addr.sin_addr);
   ::sendto(fd_, bytes.data(), bytes.size(), 0,
            reinterpret_cast<sockaddr*>(&addr), sizeof addr);
+  if (capture_) capture_->write(ns_since_midnight(), bytes.data(), bytes.size());
   ++packets_sent_;
 }
 

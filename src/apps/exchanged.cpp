@@ -30,6 +30,7 @@ int main(int argc, char** argv) {
   fcfg.dest_port = static_cast<std::uint16_t>(
       std::atoi(arg_value(argc, argv, "--mcast-port", "26000")));
   fcfg.session = arg_value(argc, argv, "--session", "NSQSIM");
+  fcfg.capture_path = arg_value(argc, argv, "--capture", "");
 
   nsq::MpscQueue<nsq::engine::Command> to_engine;
   nsq::MpscQueue<nsq::engine::ClientResponse> to_gateway;
