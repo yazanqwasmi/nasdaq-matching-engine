@@ -55,8 +55,8 @@ target_link_libraries(nsq_gateway PUBLIC nsq_engine nsq_soup)
 add_library(nsq_feed STATIC src/feed/feed.cpp)
 target_link_libraries(nsq_feed PUBLIC nsq_engine nsq_mold)
 
-add_library(nsq_client STATIC src/client/itch_book.cpp)
-target_link_libraries(nsq_client PUBLIC nsq_book nsq_mold)
+add_library(nsq_client STATIC src/client/itch_book.cpp src/client/ouch_client.cpp)
+target_link_libraries(nsq_client PUBLIC nsq_book nsq_mold nsq_soup)
 
 add_executable(demo src/apps/demo.cpp)
 target_link_libraries(demo PRIVATE nsq_book)
@@ -69,6 +69,9 @@ target_link_libraries(flowgen PRIVATE nsq_soup)
 
 add_executable(itchlisten src/apps/itchlisten.cpp)
 target_link_libraries(itchlisten PRIVATE nsq_client)
+
+add_executable(marketsim src/apps/marketsim.cpp)
+target_link_libraries(marketsim PRIVATE nsq_client)
 
 enable_testing()
 add_subdirectory(tests)
