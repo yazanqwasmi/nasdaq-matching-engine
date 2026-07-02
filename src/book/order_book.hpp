@@ -31,6 +31,7 @@ struct AddedEvent {
   Side side;
   Price price;
   Qty qty;  // resting (post-match) quantity
+  bool operator==(const AddedEvent&) const = default;
 };
 
 struct ExecutedEvent {
@@ -40,12 +41,14 @@ struct ExecutedEvent {
   Price price;  // execution price == resting order's price
   Qty qty;
   std::uint64_t match_id;
+  bool operator==(const ExecutedEvent&) const = default;
 };
 
 struct CanceledEvent {
   OrderId id;
   Qty canceled_qty;
   bool removed;  // false for a partial reduction
+  bool operator==(const CanceledEvent&) const = default;
 };
 
 struct ReplacedEvent {
@@ -54,6 +57,7 @@ struct ReplacedEvent {
   Side side;
   Price price;
   Qty qty;
+  bool operator==(const ReplacedEvent&) const = default;
 };
 
 class BookListener {
