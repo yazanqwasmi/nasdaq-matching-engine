@@ -4,6 +4,7 @@
 // kqueue-based consumer be woken via a pipe write.
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -38,12 +39,26 @@ class MpscQueue {
     return std::exchange(items_, {});
   }
 
+  // Like wait_drain but returns (possibly empty) after `timeout`; use
+  // stopped() to distinguish shutdown from an idle tick.
+  template <typename Rep, typename Period>
+  std::vector<T> wait_drain_for(std::chrono::duration<Rep, Period> timeout) {
+    std::unique_lock lk(mu_);
+    cv_.wait_for(lk, timeout, [&] { return !items_.empty() || stopped_; });
+    return std::exchange(items_, {});
+  }
+
   void stop() {
     {
       std::lock_guard lk(mu_);
       stopped_ = true;
     }
     cv_.notify_all();
+  }
+
+  bool stopped() {
+    std::lock_guard lk(mu_);
+    return stopped_;
   }
 
   // Called after every push, outside the lock. Set before threads start.

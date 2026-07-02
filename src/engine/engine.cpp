@@ -30,6 +30,11 @@ void Engine::process(const Command& cmd) {
   std::visit([&](const auto& m) { handle(cmd.client_id, m); }, cmd.msg);
 }
 
+BookSnapshot Engine::book_snapshot(const Symbol& symbol) const {
+  const auto it = books_.find(symbol);
+  return it == books_.end() ? BookSnapshot{} : it->second->snapshot();
+}
+
 OrderBook& Engine::book_for(const Symbol& symbol) {
   auto it = books_.find(symbol);
   if (it == books_.end())

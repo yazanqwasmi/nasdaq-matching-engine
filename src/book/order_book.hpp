@@ -76,16 +76,19 @@ struct AddResult {
 struct SnapshotOrder {
   OrderId id;
   Qty qty;
+  bool operator==(const SnapshotOrder&) const = default;
 };
 
 struct SnapshotLevel {
   Price price;
   std::vector<SnapshotOrder> orders;  // FIFO order
+  bool operator==(const SnapshotLevel&) const = default;
 };
 
 struct BookSnapshot {
   std::vector<SnapshotLevel> bids;  // best (highest) first
   std::vector<SnapshotLevel> asks;  // best (lowest) first
+  bool operator==(const BookSnapshot&) const = default;
 };
 
 class OrderBook {

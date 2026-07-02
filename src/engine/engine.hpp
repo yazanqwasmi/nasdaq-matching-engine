@@ -56,6 +56,10 @@ class Engine : private BookListener {
   void start();
   void stop();
 
+  // Snapshot of one symbol's book. Only safe when the engine thread is not
+  // running (tests / post-shutdown inspection).
+  BookSnapshot book_snapshot(const Symbol& symbol) const;
+
  private:
   struct OrderInfo {
     std::uint64_t client_id;

@@ -1,0 +1,65 @@
+// The exchange daemon: OUCH/SoupBinTCP gateway + matching engine + ITCH/
+// MoldUDP64 multicast feed, wired through queues. Ctrl-C shuts down in
+// order (gateway, engine, feed) so the feed ends with an end-of-session.
+#include "engine/engine.hpp"
+#include "feed/feed.hpp"
+#include "gateway/gateway.hpp"
+
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+namespace {
+volatile std::sig_atomic_t g_stop = 0;
+void on_sigint(int) { g_stop = 1; }
+
+const char* arg_value(int argc, char** argv, const char* name,
+                      const char* fallback) {
+  for (int i = 1; i + 1 < argc; ++i)
+    if (std::strcmp(argv[i], name) == 0) return argv[i + 1];
+  return fallback;
+}
+}  // namespace
+
+int main(int argc, char** argv) {
+  const auto port =
+      static_cast<std::uint16_t>(std::atoi(arg_value(argc, argv, "--port", "26400")));
+  nsq::feed::FeedConfig fcfg;
+  fcfg.dest_ip = arg_value(argc, argv, "--mcast", "239.192.0.1");
+  fcfg.dest_port = static_cast<std::uint16_t>(
+      std::atoi(arg_value(argc, argv, "--mcast-port", "26000")));
+  fcfg.session = arg_value(argc, argv, "--session", "NSQSIM");
+
+  nsq::MpscQueue<nsq::engine::Command> to_engine;
+  nsq::MpscQueue<nsq::engine::ClientResponse> to_gateway;
+  nsq::MpscQueue<nsq::engine::MarketEvent> to_feed;
+
+  nsq::engine::Engine engine{to_engine, to_gateway, to_feed};
+  nsq::gateway::Gateway gateway{port, to_engine, to_gateway};
+  nsq::feed::FeedPublisher feed{to_feed, fcfg};
+
+  engine.start();
+  feed.start();
+  gateway.start();
+
+  std::printf("exchanged: OUCH gateway on tcp/%u, ITCH feed to %s:%u (%s)\n",
+              gateway.port(), fcfg.dest_ip.c_str(), fcfg.dest_port,
+              fcfg.session.c_str());
+  std::fflush(stdout);
+
+  std::signal(SIGINT, on_sigint);
+  std::signal(SIGTERM, on_sigint);
+  while (!g_stop) {
+    struct timespec ts {0, 100'000'000};
+    nanosleep(&ts, nullptr);
+  }
+
+  std::puts("exchanged: shutting down");
+  gateway.stop();
+  engine.stop();
+  feed.stop();  // flushes and sends end-of-session
+  std::printf("exchanged: done (%llu feed packets)\n",
+              static_cast<unsigned long long>(feed.packets_sent()));
+  return 0;
+}
