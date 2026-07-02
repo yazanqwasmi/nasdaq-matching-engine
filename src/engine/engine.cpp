@@ -35,10 +35,10 @@ BookSnapshot Engine::book_snapshot(const Symbol& symbol) const {
   return it == books_.end() ? BookSnapshot{} : it->second->snapshot();
 }
 
-OrderBook& Engine::book_for(const Symbol& symbol) {
+FastBook& Engine::book_for(const Symbol& symbol) {
   auto it = books_.find(symbol);
   if (it == books_.end())
-    it = books_.emplace(symbol, std::make_unique<OrderBook>(
+    it = books_.emplace(symbol, std::make_unique<FastBook>(
                                     static_cast<BookListener&>(*this)))
              .first;
   return *it->second;

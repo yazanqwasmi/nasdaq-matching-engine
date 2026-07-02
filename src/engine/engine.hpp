@@ -7,7 +7,7 @@
 // threads; start()/stop() wrap it in a queue-pumping thread.
 #pragma once
 
-#include "book/order_book.hpp"
+#include "book/fast_book.hpp"
 #include "common/queue.hpp"
 #include "common/types.hpp"
 #include "ouch/ouch.hpp"
@@ -79,7 +79,7 @@ class Engine : private BookListener {
   void on_canceled(const CanceledEvent& e) override;
   void on_replaced(const ReplacedEvent& e) override;
 
-  OrderBook& book_for(const Symbol& symbol);
+  FastBook& book_for(const Symbol& symbol);
   void reject(std::uint64_t client, const ouch::Token& token, char reason);
   bool token_used(std::uint64_t client, const ouch::Token& token) const;
   void reduce_open(OrderId id, Qty by);
@@ -88,7 +88,7 @@ class Engine : private BookListener {
   MpscQueue<ClientResponse>& to_gateway_;
   MpscQueue<MarketEvent>& to_feed_;
 
-  std::map<Symbol, std::unique_ptr<OrderBook>> books_;
+  std::map<Symbol, std::unique_ptr<FastBook>> books_;
   std::unordered_map<OrderId, OrderInfo> orders_;
   // (client, token) -> live order ref; used set persists for the whole day.
   std::map<std::pair<std::uint64_t, std::string>, OrderId> live_tokens_;
