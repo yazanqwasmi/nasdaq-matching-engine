@@ -37,5 +37,8 @@ FetchContent_MakeAvailable(googletest)
 add_library(nsq_common INTERFACE)
 target_include_directories(nsq_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+add_library(nsq_book STATIC src/book/order_book.cpp)
+target_link_libraries(nsq_book PUBLIC nsq_common)
+
 enable_testing()
 add_subdirectory(tests)
