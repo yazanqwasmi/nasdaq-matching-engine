@@ -40,6 +40,9 @@ target_include_directories(nsq_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_library(nsq_book STATIC src/book/order_book.cpp)
 target_link_libraries(nsq_book PUBLIC nsq_common)
 
+add_library(nsq_soup STATIC src/soup/soup.cpp)
+target_link_libraries(nsq_soup PUBLIC nsq_common)
+
 add_executable(demo src/apps/demo.cpp)
 target_link_libraries(demo PRIVATE nsq_book)
 
