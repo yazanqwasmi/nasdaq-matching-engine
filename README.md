@@ -1,5 +1,10 @@
 # nasdaq-sim-cpp
 
+<!-- replace OWNER/REPO after pushing to GitHub -->
+![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)
+
+![Live order book demo](docs/demo.gif)
+
 A NASDAQ-style exchange simulator in C++20: price-time-priority matching
 engine, OUCH 4.2 order entry over SoupBinTCP (TCP), and ITCH 5.0 market data
 over MoldUDP64 (UDP multicast), with a multi-agent market simulator, a live
@@ -83,7 +88,7 @@ ctest --test-dir build-rel
 ```
 
 Sanitizer presets: `-DSANITIZE_ADDRESS=ON` (ASan+UBSan) or
-`-DSANITIZE_THREAD=ON` (TSan). The full suite (97 tests) is green under
+`-DSANITIZE_THREAD=ON` (TSan). The full suite (107 tests) is green under
 both.
 
 ## Run the market
@@ -108,6 +113,68 @@ both.
 
 Also included: `demo` (in-process matching walkthrough, no sockets) and
 `flowgen` (single-connection random flow).
+
+## Real market data
+
+The decoder is validated against real exchange data, not just this
+simulator's own feed. NASDAQ publishes free full-day TotalView-ITCH 5.0
+sample files (emi.nasdaq.com → ITCH → *Nasdaq ITCH*; ~3.5 GB gzipped per
+day). `itchfile` streams them from stdin — the file is never decompressed
+to disk:
+
+```sh
+curl -LO "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_ITCH50.gz"
+gzcat 12302019.NASDAQ_ITCH50.gz | ./build-rel/itchfile - --symbol AAPL
+```
+
+Actual output for the full December 30, 2019 trading day (268.7M
+messages, zero framing errors — skipped types are exactly the non-book
+messages outside the documented subset: NOII, crosses, Reg SHO, MWCB, …):
+
+```
+itchfile: 268744780 messages in 33.6s (8.0M msgs/sec)
+type        decoded      skipped
+A         117145568            0
+C             99917            0
+D         114360997            0
+E           5722824            0
+F           1485888            0
+H              8966            0
+I                 0      4024315
+J                 0           34
+K                 0            3
+L                 0       215161
+P           1218602            0
+Q                 0        17836
+R              8906            0
+S                 6            0
+U          21639067            0
+V                 0            1
+X           2787676            0
+Y                 0         9013
+symbols tracked: 1   filtered adds: 117932712   executed shares: 711223674
+```
+
+The final ladder after the full day is empty — correctly: NASDAQ purges
+the book at end of session (note deletes ≈ adds above). Capping mid-session
+shows the real AAPL book (`--max-messages 150000000`):
+
+```
+AAPL (top 8):
+  BID                    | ASK
+  -----------------------+-----------------------
+       200    291.1300   | 291.1400         206
+       100    291.1100   | 291.1500         100
+       210    291.1000   | 291.1600         372
+       200    291.0900   | 291.1700         301
+       400    291.0800   | 291.1800         400
+       200    291.0700   | 291.1900         401
+       266    291.0600   | 291.2000         400
+       278    291.0500   | 291.2100         300
+```
+
+A penny-wide AAPL market at $291 — which is where AAPL actually traded
+that day.
 
 ## Measured performance
 
@@ -164,6 +231,6 @@ src/itch/     ITCH 5.0 codec           src/mold/  MoldUDP64 packetizer
 src/engine/   matching service          src/gateway/  kqueue TCP gateway
 src/feed/     ITCH publisher + capture  src/client/   book builder, OUCH client
 src/apps/     exchanged, marketsim, flowgen, itchview, itchlisten, itchreplay, bench, demo
-tests/        97 tests (GoogleTest)
+tests/        107 tests (GoogleTest)
 docs/         design document
 ```
