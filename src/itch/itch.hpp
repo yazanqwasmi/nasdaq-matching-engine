@@ -389,4 +389,36 @@ inline std::optional<Message> decode(const std::uint8_t* p, std::size_t n) {
   }
 }
 
+// Total wire size for every ITCH 5.0 message type (including types outside
+// the decoded subset, so raw-file readers can skip them without losing
+// framing). Returns 0 for unknown types.
+constexpr std::size_t message_size(char type) {
+  switch (type) {
+    case 'S': return SystemEvent::kSize;
+    case 'R': return StockDirectory::kSize;
+    case 'H': return TradingAction::kSize;
+    case 'A': return AddOrder::kSize;
+    case 'F': return AddOrderMpid::kSize;
+    case 'E': return OrderExecuted::kSize;
+    case 'C': return OrderExecutedWithPrice::kSize;
+    case 'X': return OrderCancel::kSize;
+    case 'D': return OrderDelete::kSize;
+    case 'U': return OrderReplace::kSize;
+    case 'P': return Trade::kSize;
+    case 'Y': return 20;  // Reg SHO short sale price test restriction
+    case 'L': return 26;  // market participant position
+    case 'V': return 35;  // MWCB decline levels
+    case 'W': return 12;  // MWCB status
+    case 'K': return 28;  // IPO quoting period update
+    case 'J': return 35;  // LULD auction collar
+    case 'h': return 21;  // operational halt
+    case 'Q': return 40;  // cross trade
+    case 'B': return 19;  // broken trade
+    case 'I': return 50;  // net order imbalance indicator
+    case 'N': return 20;  // retail price improvement indicator
+    case 'O': return 48;  // direct listing with capital raise
+    default: return 0;
+  }
+}
+
 }  // namespace nsq::itch
