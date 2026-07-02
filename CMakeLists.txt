@@ -79,5 +79,8 @@ target_link_libraries(itchview PRIVATE nsq_client)
 add_executable(itchreplay src/apps/itchreplay.cpp)
 target_link_libraries(itchreplay PRIVATE nsq_feed)
 
+add_executable(bench src/apps/bench.cpp)
+target_link_libraries(bench PRIVATE nsq_gateway nsq_feed nsq_client)
+
 enable_testing()
 add_subdirectory(tests)
