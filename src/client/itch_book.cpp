@@ -30,9 +30,16 @@ void ItchBookBuilder::on_message(const itch::Message& msg) {
                     m.add.shares);
         } else if constexpr (std::is_same_v<T, itch::OrderExecuted>) {
           last_ts_ = m.timestamp;
+          if (const auto it = orders_.find(m.order_ref); it != orders_.end())
+            last_trade_price_ = it->second.price;
+          last_trade_qty_ = m.executed_shares;
+          executed_shares_ += m.executed_shares;
           reduce_order(m.order_ref, m.executed_shares);
         } else if constexpr (std::is_same_v<T, itch::OrderExecutedWithPrice>) {
           last_ts_ = m.exec.timestamp;
+          last_trade_price_ = m.execution_price;
+          last_trade_qty_ = m.exec.executed_shares;
+          executed_shares_ += m.exec.executed_shares;
           reduce_order(m.exec.order_ref, m.exec.executed_shares);
         } else if constexpr (std::is_same_v<T, itch::OrderCancel>) {
           last_ts_ = m.timestamp;

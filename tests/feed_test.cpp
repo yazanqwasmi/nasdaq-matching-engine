@@ -111,6 +111,9 @@ TEST(ItchBookBuilder, ReconstructsFromMessages) {
   ASSERT_EQ(snap.bids.size(), 1u);
   EXPECT_EQ(snap.bids[0].orders[0].qty, 60u);
   ASSERT_EQ(snap.asks.size(), 1u);
+  EXPECT_EQ(builder.executed_shares(), 40u);
+  EXPECT_EQ(builder.last_trade_price(), make_price(100, 0));
+  EXPECT_EQ(builder.last_trade_qty(), 40u);
 
   e.executed_shares = 60;  // exhausts order 1 -> level disappears
   builder.on_message(e);

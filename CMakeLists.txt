@@ -73,5 +73,8 @@ target_link_libraries(itchlisten PRIVATE nsq_client)
 add_executable(marketsim src/apps/marketsim.cpp)
 target_link_libraries(marketsim PRIVATE nsq_client)
 
+add_executable(itchview src/apps/itchview.cpp)
+target_link_libraries(itchview PRIVATE nsq_client)
+
 enable_testing()
 add_subdirectory(tests)

@@ -29,6 +29,9 @@ class ItchBookBuilder {
   bool had_gap() const { return gaps_.had_gap(); }
   std::uint64_t message_count() const { return messages_; }
   std::uint64_t last_timestamp() const { return last_ts_; }
+  std::uint64_t executed_shares() const { return executed_shares_; }
+  Price last_trade_price() const { return last_trade_price_; }
+  Qty last_trade_qty() const { return last_trade_qty_; }
 
  private:
   struct BuilderOrder {
@@ -52,6 +55,9 @@ class ItchBookBuilder {
   mold::GapDetector gaps_;
   std::uint64_t messages_ = 0;
   std::uint64_t last_ts_ = 0;
+  std::uint64_t executed_shares_ = 0;
+  Price last_trade_price_ = 0;
+  Qty last_trade_qty_ = 0;
 };
 
 }  // namespace nsq::client
