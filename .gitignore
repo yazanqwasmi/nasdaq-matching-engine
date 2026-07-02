@@ -2,3 +2,9 @@ build*/
 .DS_Store
 compile_commands.json
 .cache/
+
+# Downloaded NASDAQ sample data and local feed captures (never commit)
+*.itch
+*.itch.gz
+*.NASDAQ_ITCH50*
+*.cap

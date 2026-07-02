@@ -1,0 +1,32 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            cmake_flags: -DCMAKE_BUILD_TYPE=Release
+          - name: asan-ubsan
+            cmake_flags: -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_ADDRESS=ON
+          - name: tsan
+            cmake_flags: -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_THREAD=ON
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache GoogleTest
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ matrix.name }}-${{ hashFiles('CMakeLists.txt') }}
+      - name: Configure
+        run: cmake -B build ${{ matrix.cmake_flags }}
+      - name: Build
+        run: cmake --build build -j 3
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 120
