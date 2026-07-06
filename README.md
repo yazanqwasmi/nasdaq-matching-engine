@@ -93,6 +93,10 @@ both.
 
 ## Run the market
 
+**Quick start:** `./run-demo.sh` builds if needed, starts the exchange and a
+market simulator, and hands off to a live `itchview` ladder. Ctrl-C exits
+and cleans up both background processes.
+
 ```sh
 # 1. The exchange: OUCH gateway on TCP 26400, ITCH on 239.192.0.1:26000
 ./build-rel/exchanged --port 26400 --capture /tmp/session.cap
