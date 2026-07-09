@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <thread>
 
 namespace nsq::engine {
@@ -356,10 +357,20 @@ TEST(EngineLowLatency, BusyPollRingProcessesAllOrdersAndStops) {
                   "AAPL", make_price(100, 0), 100));
 
   // Every order yields at least an Accepted; collect until we've seen kN.
+  // Yield when idle so hammering the response queue's lock doesn't starve the
+  // engine's pushes; a generous deadline guards against a genuine stall.
   int accepted = 0;
-  for (int spins = 0; accepted < kN && spins < 1'000'000; ++spins)
-    for (const auto& r : to_gateway.drain())
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (accepted < kN && std::chrono::steady_clock::now() < deadline) {
+    const auto batch = to_gateway.drain();
+    if (batch.empty()) {
+      std::this_thread::yield();
+      continue;
+    }
+    for (const auto& r : batch)
       if (std::holds_alternative<ouch::Accepted>(r.msg)) ++accepted;
+  }
 
   engine.stop();
   EXPECT_EQ(accepted, kN);
