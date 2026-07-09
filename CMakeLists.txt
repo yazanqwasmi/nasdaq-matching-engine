@@ -10,11 +10,11 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Werror)
-
 option(SANITIZE_ADDRESS "Build with AddressSanitizer + UBSan" OFF)
 option(SANITIZE_THREAD "Build with ThreadSanitizer" OFF)
 
+# Sanitizers apply to everything (including GoogleTest) so instrumentation is
+# consistent across the link.
 if(SANITIZE_ADDRESS)
   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
@@ -32,6 +32,10 @@ FetchContent_Declare(
   DOWNLOAD_EXTRACT_TIMESTAMP ON
 )
 FetchContent_MakeAvailable(googletest)
+
+# Strict warnings apply only to our targets (declared below), not to the
+# fetched GoogleTest sources — newer compilers warn inside gtest headers.
+add_compile_options(-Wall -Wextra -Wpedantic -Wconversion -Werror)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)

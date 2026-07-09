@@ -2,6 +2,9 @@
 
 #include "common/endian.hpp"
 
+#include <algorithm>
+#include <utility>
+
 namespace nsq::mold {
 
 namespace {

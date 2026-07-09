@@ -3,7 +3,9 @@ include(GoogleTest)
 function(nsq_test name)
   add_executable(${name} ${name}.cpp)
   target_link_libraries(${name} PRIVATE ${ARGN} GTest::gtest_main)
-  gtest_discover_tests(${name})
+  # PRE_TEST: enumerate tests at ctest time, not by running each binary during
+  # the (parallel, sanitized) build — avoids build-time discovery flakiness.
+  gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST)
 endfunction()
 
 nsq_test(common_test nsq_common)
