@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -86,10 +87,10 @@ int main(int argc, char** argv) {
 
   nsq::client::ItchBookBuilder builder;
   std::uint64_t packets = 0;
-  time_t start = time(nullptr);
+  std::time_t start = std::time(nullptr);
   bool eos = false;
   while (!g_stop && !eos) {
-    if (seconds > 0 && time(nullptr) - start >= seconds) break;
+    if (seconds > 0 && std::time(nullptr) - start >= seconds) break;
     std::uint8_t buf[2048];
     const ssize_t n = ::recvfrom(fd, buf, sizeof buf, 0, nullptr, nullptr);
     if (n <= 0) continue;  // timeout: re-check stop conditions
