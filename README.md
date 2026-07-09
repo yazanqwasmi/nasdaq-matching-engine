@@ -1,7 +1,8 @@
-# nasdaq-sim-cpp
+# nasdaq-matching-engine
 
-<!-- replace OWNER/REPO after pushing to GitHub -->
-![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/yazanqwasmi/nasdaq-matching-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/yazanqwasmi/nasdaq-matching-engine/actions/workflows/ci.yml)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
+![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)
 
 ![Live order book demo](docs/demo.gif)
 
@@ -15,16 +16,46 @@ Implements a **documented subset** of the NASDAQ protocols (see
 simulator built for engineering fidelity, not a claim of full exchange parity.
 
 ```
- OUCH clients ──TCP──▶ Gateway ──queue──▶ Engine thread ──queue──▶ Feed ──UDP multicast──▶ ITCH listeners
- (flowgen /            (kqueue loop,      (matching,       │       (ITCH 5.0 encode,       (itchlisten,
-  marketsim)            SoupBinTCP +       single writer,  │        MoldUDP64               itchview,
-                        OUCH 4.2 codec,    FastBook)       │        packetizer,             capture-file
-                        risk checks)                       ▼        capture tee)            reconstruction)
+ OUCH clients ──TCP──▶ Gateway ──────queue──────▶ Engine thread ──queue──▶ Feed ──UDP multicast──▶ ITCH listeners
+ (flowgen /           (kqueue/epoll loop,        (matching,       │       (ITCH 5.0 encode,       (itchlisten,
+  marketsim)           SoupBinTCP + OUCH 4.2      single writer,   │        MoldUDP64               itchview,
+                       codec, risk checks)        FastBook)        │        packetizer,             capture-file
+                                                                   ▼        capture tee)            reconstruction)
                                   ◀──queue── OUCH responses (Accepted / Executed / Canceled / Replaced / Rejected)
 ```
 
 Single-writer engine thread; I/O at the edges; every stage communicates
 through queues. Only the engine touches the books.
+
+## Highlights
+
+- **Two matching books, proven equivalent.** A simple `std::map` reference
+  book (the auditable oracle) and an allocation-free `FastBook` (contiguous
+  price ladder, pooled orders, open-addressing id map) are held
+  **byte-identical** by a 500k-op differential fuzz test — 3.3× faster, zero
+  hot-path heap allocations (proven by a counting allocator).
+- **Validated against real exchange data.** Decodes a full NASDAQ
+  TotalView-ITCH trading day — **268.7M messages at 8.0M msg/s, zero framing
+  errors** — and reconstructs the real AAPL book.
+- **Full protocol stack, golden-tested.** OUCH 4.2 / SoupBinTCP and ITCH 5.0 /
+  MoldUDP64, **encode and decode**, checked against hand-computed byte layouts
+  with spec offsets.
+- **Order types.** Limit, IOC, market, and minimum-quantity / fill-or-kill.
+- **Latency measured honestly.** Open-loop, coordinated-omission-corrected
+  benchmarks, plus an optional low-latency engine mode (lock-free SPSC ring,
+  busy-poll, core-pin, `mlockall`).
+- **Cross-platform and CI-gated.** One event-loop interface over kqueue
+  (macOS) and epoll (Linux); **113 tests** green on both under ASan+UBSan and
+  ThreadSanitizer.
+
+## Contents
+
+- [The matching engine](#the-matching-engine)
+- [Protocol subset](#protocol-subset) · [Non-goals](#non-goals)
+- [Build](#build) · [Run the market](#run-the-market)
+- [Real market data](#real-market-data)
+- [Measured performance](#measured-performance)
+- [Testing strategy](#testing-strategy) · [Layout](#layout)
 
 ## The matching engine
 
@@ -54,11 +85,27 @@ replace always loses time priority, and a replace that would cross is
 emitted as delete + fresh order lifecycle (a replaced order must rest to be
 an ITCH `U`).
 
+**Order types beyond plain limits** (driven by the OUCH `tif`, `min_qty`,
+and `price` fields on Enter Order):
+
+- **IOC** (`tif == 0`): match against whatever is available now and cancel
+  the remainder — nothing rests, so an unfilled IOC never appears as an Add
+  on the market-data feed.
+- **Market** (`price == 0x7FFFFFFF`): fill against any resting price, walking
+  the book; inherently IOC (cancel the remainder).
+- **Minimum quantity / fill-or-kill**: if fewer than `min_qty` shares can
+  execute at entry, the whole order is killed without touching the book;
+  `min_qty == shares` on an IOC order is FOK.
+
+The book gained two primitives for this: a read-only `matchable(side, limit)`
+peek (how much would fill right now, used to gate min-qty orders before they
+touch the book) and `execute_ioc(...)` (match without resting the remainder).
+
 ## Protocol subset
 
 | Layer | Implemented |
 |---|---|
-| OUCH 4.2 in | Enter Order `O`, Cancel `X`, Replace `U` |
+| OUCH 4.2 in | Enter Order `O` (limit, IOC, market, min-qty/FOK), Cancel `X`, Replace `U` |
 | OUCH 4.2 out | System Event `S`, Accepted `A`, Executed `E`, Canceled `C`, Replaced `U`, Rejected `J` |
 | SoupBinTCP | framing, Login Accept/Reject, Sequenced/Unsequenced Data, bidirectional heartbeats, 15s receive timeout, Logout, End of Session |
 | ITCH 5.0 | System Event `S`, Stock Directory `R`, Trading Action `H`, Add Order `A`/`F`, Executed `E`/`C`, Cancel `X`, Delete `D`, Replace `U`, Trade `P` — encode **and** decode |
@@ -77,9 +124,11 @@ production compliance semantics.
 
 ## Build
 
-Requires CMake ≥ 3.24 and a C++20 compiler (developed on macOS/arm64 with
-Apple Clang; the event loop is kqueue — socket code is confined to
-`gateway/`, `feed/`, and the apps for an easy epoll port).
+Requires CMake ≥ 3.24 and a C++20 compiler. Developed on macOS/arm64 with
+Apple Clang and CI-tested on Linux with Clang. The gateway event loop runs
+on **kqueue** (macOS/BSD) or **epoll** (Linux) behind a small `Poller`
+interface (`src/gateway/poller.{hpp,cpp}`) — the only OS-specific event-loop
+code; the rest of the gateway is written against that interface.
 
 ```sh
 cmake -B build-rel -DCMAKE_BUILD_TYPE=Release
@@ -88,8 +137,8 @@ ctest --test-dir build-rel
 ```
 
 Sanitizer presets: `-DSANITIZE_ADDRESS=ON` (ASan+UBSan) or
-`-DSANITIZE_THREAD=ON` (TSan). The full suite (107 tests) is green under
-both.
+`-DSANITIZE_THREAD=ON` (TSan). The full suite (113 tests) is green under
+both, on macOS (kqueue) and Linux (epoll).
 
 ## Run the market
 
@@ -100,6 +149,8 @@ and cleans up both background processes.
 ```sh
 # 1. The exchange: OUCH gateway on TCP 26400, ITCH on 239.192.0.1:26000
 ./build-rel/exchanged --port 26400 --capture /tmp/session.cap
+#    Low-latency variant (busy-poll lock-free engine; Linux adds core pin):
+#    ./build-rel/exchanged --port 26400 --ll-mode --engine-core 2
 
 # 2. A live market: 6 agents (makers + takers) for 60s
 ./build-rel/marketsim --port 26400 --agents 6 --seconds 60
@@ -182,7 +233,7 @@ that day.
 
 ## Measured performance
 
-Apple M-series, Release build (`./build-rel/bench`):
+Apple M-series (8P+4E), Release build (`./build-rel/bench`):
 
 ```
 book: 2M mixed ops (55% add / 25% cancel / 20% replace)
@@ -190,22 +241,40 @@ book: 2M mixed ops (55% add / 25% cancel / 20% replace)
   fastbook               20.49M ops/sec  (3.3x)
   fastbook per-op         p50=44ns   p90=84ns   p99=168ns   p99.9=304ns
 
-queue: cross-thread ping-pong hop latency (200k round trips)
-  mutex MpscQueue         p50=13.8µs p90=43µs   p99=106µs
-  lock-free SpscRing      p50=128ns  p90=152ns  p99=368ns
-
-end-to-end over real sockets (enter order -> response, 10k orders)
-  enter -> Accepted RTT   p50=59µs   p90=82µs   p99=139µs
-  enter -> ITCH datagram  p50=70µs   p90=94µs   p99=156µs
+queue: cross-thread hop latency (200k round trips)
+  mutex MpscQueue         p50=38.9µs p99=246µs  p99.9=377µs
+  lock-free SpscRing      p50=128ns  p99=152ns  p99.9=216ns   (~300x p50)
 ```
 
-A note on the queues: the service wiring deliberately uses the blocking
-mutex queue — at simulator message rates the end-to-end latency is
-dominated by the kernel socket path, not the inter-thread hop, and blocking
-consumers make shutdown simple and CPU usage polite. The lock-free
-`SpscRing` is implemented, TSan-verified, and benchmarked (~100x lower hop
-latency); it is the measured, drop-in upgrade path if the queues ever
-become the bottleneck (it would also imply busy-poll consumer loops).
+**Measuring latency honestly.** The end-to-end bench is **open-loop and
+coordinated-omission-corrected**: orders are emitted on a fixed schedule at a
+target rate and each order's latency is measured from its *intended* send
+time, not from when we got around to sending it. A closed-loop "send, wait
+for ack, repeat" harness (the common mistake) stops the clock whenever the
+system stalls, so its tail is a fiction. Under a 50k orders/sec offered load,
+`enter -> Accepted` over real TCP loopback:
+
+```
+                          p50     p99     p99.9    p99.99
+  blocking engine         55µs    90µs    119µs    279µs
+  busy-poll engine (LL)   48µs    80µs    110µs    250µs
+```
+
+**Low-latency mode** (`exchanged --ll-mode`, or the busy-poll leg above)
+swaps the gateway→engine hop from the blocking mutex queue to the lock-free
+`SpscRing`, which the engine **busy-polls** — no condition-variable wakeup, and
+no lock for the spinning consumer to contend with the producer over. On Linux
+it also pins the engine thread (`--engine-core N`) and `mlockall`s the process
+to keep it off the scheduler and out of the page-fault path.
+
+The isolated hop is ~300x faster (above); end-to-end the gain is ~10–15%
+across p50–p99.9, because over loopback the two TCP traversals dominate and
+the internal hop is only one serialized cost. The outer tail (p99.99+) is
+kernel/socket-scheduling jitter, which core isolation on dedicated hardware
+addresses but a shared laptop cannot. Correct call for a *simulator*: the
+default stays blocking (simple shutdown, polite CPU); LL mode is one flag away
+when the queue is the bottleneck, and now it's wired and measured, not
+promised.
 
 ## Testing strategy
 
@@ -232,9 +301,13 @@ src/common/   fixed-point price, endian, clock, histogram, queues, SPSC ring
 src/book/     reference book (oracle) + FastBook + FlatMap
 src/ouch/     OUCH 4.2 codec           src/soup/  SoupBinTCP framing/session
 src/itch/     ITCH 5.0 codec           src/mold/  MoldUDP64 packetizer
-src/engine/   matching service          src/gateway/  kqueue TCP gateway
+src/engine/   matching service          src/gateway/  kqueue/epoll TCP gateway
 src/feed/     ITCH publisher + capture  src/client/   book builder, OUCH client
 src/apps/     exchanged, marketsim, flowgen, itchview, itchlisten, itchreplay, bench, demo
-tests/        107 tests (GoogleTest)
+tests/        113 tests (GoogleTest)
 docs/         design document
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
