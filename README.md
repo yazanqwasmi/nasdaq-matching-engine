@@ -45,8 +45,8 @@ through queues. Only the engine touches the books.
   benchmarks, plus an optional low-latency engine mode (lock-free SPSC ring,
   busy-poll, core-pin, `mlockall`).
 - **Cross-platform and CI-gated.** One event-loop interface over kqueue
-  (macOS) and epoll (Linux); **113 tests** green on both under ASan+UBSan and
-  ThreadSanitizer.
+  (macOS) and epoll (Linux); the test suite is green on both, in Release and
+  under ASan+UBSan and ThreadSanitizer.
 
 ## Contents
 
@@ -137,8 +137,10 @@ ctest --test-dir build-rel
 ```
 
 Sanitizer presets: `-DSANITIZE_ADDRESS=ON` (ASan+UBSan) or
-`-DSANITIZE_THREAD=ON` (TSan). The full suite (113 tests) is green under
-both, on macOS (kqueue) and Linux (epoll).
+`-DSANITIZE_THREAD=ON` (TSan). The suite is green on macOS (kqueue) and Linux
+(epoll): 113 tests in Release; the allocation-counting test is release-only
+(it replaces the global allocator, which the sanitizers already do), so 112
+run under ASan+UBSan and TSan.
 
 ## Run the market
 

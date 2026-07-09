@@ -19,7 +19,13 @@ nsq_test(engine_test nsq_engine)
 nsq_test(gateway_test nsq_gateway)
 nsq_test(feed_test nsq_feed nsq_client)
 nsq_test(fastbook_test nsq_book)
-nsq_test(fastbook_alloc_test nsq_book)
+# The allocation-counting test replaces global operator new/delete, which is
+# incompatible with the sanitizers' own allocator interceptors (and moot when
+# they replace the allocator anyway). Build it only in non-sanitized configs;
+# it still runs on the macOS and Linux Release legs.
+if(NOT SANITIZE_ADDRESS AND NOT SANITIZE_THREAD)
+  nsq_test(fastbook_alloc_test nsq_book)
+endif()
 nsq_test(ouch_client_test nsq_client nsq_gateway)
 nsq_test(capture_test nsq_feed nsq_client)
 nsq_test(latency_test nsq_common)
