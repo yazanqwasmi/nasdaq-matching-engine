@@ -17,7 +17,7 @@ simulator built for engineering fidelity, not a claim of full exchange parity.
 
 ```
  OUCH clients ──TCP──▶ Gateway ──────queue──────▶ Engine thread ──queue──▶ Feed ──UDP multicast──▶ ITCH listeners
- (flowgen /           (kqueue/epoll loop,        (matching,       │       (ITCH 5.0 encode,       (itchlisten,
+ (flowgen /           (kqueue/epoll loop,        (matching,        │       (ITCH 5.0 encode,       (itchlisten,
   marketsim)           SoupBinTCP + OUCH 4.2      single writer,   │        MoldUDP64               itchview,
                        codec, risk checks)        FastBook)        │        packetizer,             capture-file
                                                                    ▼        capture tee)            reconstruction)
