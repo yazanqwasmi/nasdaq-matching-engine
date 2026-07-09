@@ -134,7 +134,7 @@ TEST(FeedEndToEnd, UdpRoundTripReconstructionEqualsEngineBook) {
   timeval tv{5, 0};
   ::setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
 
-  engine::MpscQueue<engine::Command> in;
+  engine::CommandChannel in;
   engine::MpscQueue<engine::ClientResponse> to_gateway;
   engine::MpscQueue<engine::MarketEvent> to_feed;
   engine::Engine eng{in, to_gateway, to_feed};

@@ -92,7 +92,7 @@ std::vector<std::uint8_t> enter_order_bytes(std::string_view token, Side side,
 }
 
 TEST(GatewaySlice, LoginEnterCrossExecuteOverTcp) {
-  engine::MpscQueue<engine::Command> to_engine;
+  engine::CommandChannel to_engine;
   engine::MpscQueue<engine::ClientResponse> to_gateway;
   engine::MpscQueue<engine::MarketEvent> to_feed;
 
@@ -147,7 +147,7 @@ TEST(GatewaySlice, LoginEnterCrossExecuteOverTcp) {
 }
 
 TEST(GatewaySlice, OversizeOrderRejectedAtGateway) {
-  engine::MpscQueue<engine::Command> to_engine;
+  engine::CommandChannel to_engine;
   engine::MpscQueue<engine::ClientResponse> to_gateway;
   engine::MpscQueue<engine::MarketEvent> to_feed;
 

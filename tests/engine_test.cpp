@@ -28,9 +28,29 @@ Command enter(std::uint64_t client, std::string_view token, Side side,
   return Command{client, m};
 }
 
+// EnterOrder with explicit time-in-force / min-quantity for the TIF tests.
+Command enter_tif(std::uint64_t client, std::string_view token, Side side,
+                  std::string_view stock, Price price, Qty shares,
+                  std::uint32_t tif, Qty min_qty = 0) {
+  ouch::EnterOrder m{};
+  m.token = ouch::make_token(token);
+  m.side = side;
+  m.shares = shares;
+  m.stock = make_symbol(stock);
+  m.price = price;
+  m.tif = tif;
+  m.min_qty = min_qty;
+  m.display = 'Y';
+  m.capacity = 'A';
+  m.intermarket_sweep = 'N';
+  m.cross_type = 'N';
+  m.customer_type = 'R';
+  return Command{client, m};
+}
+
 class EngineTest : public ::testing::Test {
  protected:
-  MpscQueue<Command> in;
+  CommandChannel in;
   MpscQueue<ClientResponse> to_gateway;
   MpscQueue<MarketEvent> to_feed;
   Engine engine{in, to_gateway, to_feed};
@@ -220,6 +240,129 @@ TEST_F(EngineTest, ReplaceUnknownOrExecutedTokenIgnored) {
   r.price = make_price(100, 0);
   engine.process(Command{1, r});
   EXPECT_TRUE(responses().empty());
+}
+
+// ---------------------------------------------------------------- time in force
+
+TEST_F(EngineTest, IocPartialFillsThenCancelsRemainderWithoutResting) {
+  engine.process(enter(1, "S1", Side::Sell, "AAPL", make_price(100, 0), 100));
+  engine.process(
+      enter_tif(2, "B1", Side::Buy, "AAPL", make_price(100, 0), 300,
+                ouch::kTifIOC));
+
+  const auto rs = responses();
+  // Accepted(S1), Accepted(B1), Executed(S1), Executed(B1), Canceled(B1 rem).
+  ASSERT_EQ(rs.size(), 5u);
+  EXPECT_NE(std::get_if<ouch::Executed>(&rs[2].msg), nullptr);
+  EXPECT_NE(std::get_if<ouch::Executed>(&rs[3].msg), nullptr);
+  const auto* can = std::get_if<ouch::Canceled>(&rs[4].msg);
+  ASSERT_NE(can, nullptr);
+  EXPECT_EQ(rs[4].client_id, 2u);
+  EXPECT_EQ(can->decrement_shares, 200u);  // 300 - 100 filled
+  EXPECT_EQ(can->reason, 'I');
+
+  // Nothing from the IOC order rests: both sides of the book are empty.
+  const auto snap = engine.book_snapshot(make_symbol("AAPL"));
+  EXPECT_TRUE(snap.bids.empty());
+  EXPECT_TRUE(snap.asks.empty());
+}
+
+TEST_F(EngineTest, IocFullyFilledEmitsNoCancel) {
+  engine.process(enter(1, "S1", Side::Sell, "AAPL", make_price(100, 0), 300));
+  engine.process(
+      enter_tif(2, "B1", Side::Buy, "AAPL", make_price(100, 0), 300,
+                ouch::kTifIOC));
+
+  const auto rs = responses();
+  ASSERT_EQ(rs.size(), 4u);  // Accepted x2, Executed x2, no Canceled
+  EXPECT_EQ(std::get_if<ouch::Canceled>(&rs[3].msg), nullptr);
+  EXPECT_NE(std::get_if<ouch::Executed>(&rs[3].msg), nullptr);
+}
+
+TEST_F(EngineTest, FillOrKillKilledWhenLiquidityInsufficient) {
+  engine.process(enter(1, "S1", Side::Sell, "AAPL", make_price(100, 0), 100));
+  // FOK == IOC with min_qty == shares. Only 100 available, want 300.
+  engine.process(
+      enter_tif(2, "B1", Side::Buy, "AAPL", make_price(100, 0), 300,
+                ouch::kTifIOC, /*min_qty=*/300));
+
+  const auto rs = responses();
+  // Accepted(S1), Accepted(B1), Canceled(B1) — no executions at all.
+  ASSERT_EQ(rs.size(), 3u);
+  const auto* can = std::get_if<ouch::Canceled>(&rs[2].msg);
+  ASSERT_NE(can, nullptr);
+  EXPECT_EQ(can->decrement_shares, 300u);
+  EXPECT_EQ(can->reason, 'D');
+
+  // The resting sell is untouched (the kill never took any liquidity).
+  const auto snap = engine.book_snapshot(make_symbol("AAPL"));
+  ASSERT_EQ(snap.asks.size(), 1u);
+  EXPECT_EQ(snap.asks[0].price, make_price(100, 0));
+  EXPECT_EQ(snap.asks[0].orders[0].qty, 100u);
+}
+
+TEST_F(EngineTest, FillOrKillFillsWhenLiquiditySuffices) {
+  engine.process(enter(1, "S1", Side::Sell, "AAPL", make_price(100, 0), 300));
+  engine.process(
+      enter_tif(2, "B1", Side::Buy, "AAPL", make_price(100, 0), 300,
+                ouch::kTifIOC, /*min_qty=*/300));
+
+  const auto rs = responses();
+  ASSERT_EQ(rs.size(), 4u);  // Accepted x2, Executed x2
+  EXPECT_NE(std::get_if<ouch::Executed>(&rs[3].msg), nullptr);
+  const auto snap = engine.book_snapshot(make_symbol("AAPL"));
+  EXPECT_TRUE(snap.asks.empty());
+}
+
+TEST_F(EngineTest, MarketOrderWalksLevelsAndCancelsRemainder) {
+  engine.process(enter(1, "S1", Side::Sell, "AAPL", make_price(100, 0), 100));
+  engine.process(enter(1, "S2", Side::Sell, "AAPL", make_price(101, 0), 100));
+  engine.process(enter_tif(2, "B1", Side::Buy, "AAPL", ouch::kMarketPrice, 250,
+                           ouch::kTifDay));
+
+  const auto rs = responses();
+  // Accepted x3, then four Executed (two levels x two owners), then Canceled.
+  ASSERT_EQ(rs.size(), 8u);
+  const auto* ex_a = std::get_if<ouch::Executed>(&rs[3].msg);
+  const auto* ex_b = std::get_if<ouch::Executed>(&rs[5].msg);
+  ASSERT_NE(ex_a, nullptr);
+  ASSERT_NE(ex_b, nullptr);
+  EXPECT_EQ(ex_a->execution_price, make_price(100, 0));
+  EXPECT_EQ(ex_b->execution_price, make_price(101, 0));  // walked up a level
+  const auto* can = std::get_if<ouch::Canceled>(&rs[7].msg);
+  ASSERT_NE(can, nullptr);
+  EXPECT_EQ(can->decrement_shares, 50u);  // 250 - 200 available
+  EXPECT_EQ(can->reason, 'I');
+
+  const auto snap = engine.book_snapshot(make_symbol("AAPL"));
+  EXPECT_TRUE(snap.asks.empty());
+  EXPECT_TRUE(snap.bids.empty());
+}
+
+// Exercises the low-latency path: a lock-free CommandChannel consumed by the
+// engine's busy-poll loop on its own thread, with commands pushed from this
+// (producer) thread. Verifies correct processing and clean shutdown — and
+// gives ThreadSanitizer the ring + busy-poll + stop path to check.
+TEST(EngineLowLatency, BusyPollRingProcessesAllOrdersAndStops) {
+  CommandChannel in{/*lock_free=*/true};
+  MpscQueue<ClientResponse> to_gateway;
+  MpscQueue<MarketEvent> to_feed;
+  Engine engine{in, to_gateway, to_feed};
+  engine.start();  // busy-polls because the channel is lock-free
+
+  constexpr int kN = 500;
+  for (int i = 0; i < kN; ++i)
+    in.push(enter(1, "T" + std::to_string(i), (i & 1) ? Side::Buy : Side::Sell,
+                  "AAPL", make_price(100, 0), 100));
+
+  // Every order yields at least an Accepted; collect until we've seen kN.
+  int accepted = 0;
+  for (int spins = 0; accepted < kN && spins < 1'000'000; ++spins)
+    for (const auto& r : to_gateway.drain())
+      if (std::holds_alternative<ouch::Accepted>(r.msg)) ++accepted;
+
+  engine.stop();
+  EXPECT_EQ(accepted, kN);
 }
 
 TEST(MpscQueueTest, PushDrainAcrossThreads) {

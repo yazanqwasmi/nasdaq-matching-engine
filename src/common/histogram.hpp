@@ -38,15 +38,16 @@ class LatencyHistogram {
   }
 
   std::string summary(const char* label) const {
-    char buf[256];
+    char buf[320];
     std::snprintf(buf, sizeof buf,
-                  "%-24s n=%-9llu p50=%-8llu p90=%-8llu p99=%-8llu "
-                  "p99.9=%-8llu max=%llu (ns)",
+                  "%-22s n=%-9llu p50=%-7llu p90=%-7llu p99=%-7llu "
+                  "p99.9=%-7llu p99.99=%-7llu max=%llu (ns)",
                   label, static_cast<unsigned long long>(count_),
                   static_cast<unsigned long long>(percentile(50)),
                   static_cast<unsigned long long>(percentile(90)),
                   static_cast<unsigned long long>(percentile(99)),
                   static_cast<unsigned long long>(percentile(99.9)),
+                  static_cast<unsigned long long>(percentile(99.99)),
                   static_cast<unsigned long long>(max_));
     return buf;
   }

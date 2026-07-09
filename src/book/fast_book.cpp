@@ -257,6 +257,41 @@ AddResult FastBook::add(OrderId id, Side side, Price price, Qty qty) {
   return {AddStatus::Ok, filled, resting};
 }
 
+Qty FastBook::execute_ioc(OrderId id, Side side, Price limit, Qty qty) {
+  return match(id, side, limit, qty);
+}
+
+Qty FastBook::matchable(Side side, Price limit) const {
+  Qty total = 0;
+  if (side == Side::Buy) {
+    // Sum asks priced at or below the limit (ascending price from best).
+    const int n = static_cast<int>(ladder_.size());
+    for (int t = band_set_ ? ladder_best_ask() : -1; t >= 0 && t < n; ++t) {
+      const Level& lvl = ladder_[static_cast<std::size_t>(t)];
+      if (lvl.head == kNil || pool_[lvl.head].side != Side::Sell) continue;
+      if (price_at(t) > limit) break;
+      total += lvl.total;
+    }
+    for (const auto& [px, lvl] : fb_asks_) {
+      if (px > limit) break;
+      total += lvl.total;
+    }
+  } else {
+    // Sum bids priced at or above the limit (descending price from best).
+    for (int t = band_set_ ? ladder_best_bid() : -1; t >= 0; --t) {
+      const Level& lvl = ladder_[static_cast<std::size_t>(t)];
+      if (lvl.head == kNil || pool_[lvl.head].side != Side::Buy) continue;
+      if (price_at(t) < limit) break;
+      total += lvl.total;
+    }
+    for (const auto& [px, lvl] : fb_bids_) {
+      if (px < limit) break;
+      total += lvl.total;
+    }
+  }
+  return total;
+}
+
 bool FastBook::cancel(OrderId id, Qty keep_qty) {
   const auto* pidx = index_.find(id);
   if (pidx == nullptr) return false;

@@ -72,7 +72,7 @@ TEST(Capture, RejectsBadMagicAndTruncation) {
 TEST(Capture, CapturedSessionReconstructsIdenticalBook) {
   const std::string path = temp_path("sess");
 
-  engine::MpscQueue<engine::Command> in;
+  engine::CommandChannel in;
   engine::MpscQueue<engine::ClientResponse> to_gateway;
   engine::MpscQueue<engine::MarketEvent> to_feed;
   engine::Engine eng{in, to_gateway, to_feed};

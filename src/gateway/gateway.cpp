@@ -7,7 +7,6 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <sys/event.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -20,7 +19,6 @@ namespace nsq::gateway {
 
 namespace {
 
-constexpr uintptr_t kTimerIdent = 1;
 constexpr int kTickMs = 500;
 
 void set_nonblocking(int fd) {
@@ -80,7 +78,7 @@ struct Gateway::Conn : soup::ServerSession::Listener {
   }
 };
 
-Gateway::Gateway(std::uint16_t port, MpscQueue<engine::Command>& to_engine,
+Gateway::Gateway(std::uint16_t port, engine::CommandChannel& to_engine,
                  MpscQueue<engine::ClientResponse>& from_engine)
     : port_(port), to_engine_(to_engine), from_engine_(from_engine) {
   listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -131,50 +129,52 @@ void Gateway::stop() {
 }
 
 void Gateway::run() {
-  kq_ = ::kqueue();
-  struct kevent evs[3];
-  EV_SET(&evs[0], static_cast<uintptr_t>(listen_fd_), EVFILT_READ, EV_ADD, 0,
-         0, nullptr);
-  EV_SET(&evs[1], static_cast<uintptr_t>(wake_pipe_[0]), EVFILT_READ, EV_ADD,
-         0, 0, nullptr);
-  EV_SET(&evs[2], kTimerIdent, EVFILT_TIMER, EV_ADD, 0, kTickMs, nullptr);
-  ::kevent(kq_, evs, 3, nullptr, 0, nullptr);
+  poller_.add_read(listen_fd_);
+  poller_.add_read(wake_pipe_[0]);
 
-  struct kevent events[64];
+  // Session heartbeats/timeouts are driven off wall-clock elapsed time rather
+  // than a kernel timer, so the loop is identical on kqueue and epoll.
+  constexpr std::uint64_t kTickNs = static_cast<std::uint64_t>(kTickMs) * 1'000'000;
+  std::uint64_t last_tick = ns_since_midnight();
+  std::vector<Poller::Event> events;
+
   while (!stopping_) {
-    const int n = ::kevent(kq_, nullptr, 0, events, 64, nullptr);
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      break;
+    if (poller_.wait(events, kTickMs) < 0 && errno != EINTR) break;
+
+    const std::uint64_t now = ns_since_midnight();
+    if (now - last_tick >= kTickNs) {
+      tick_sessions();
+      last_tick = now;
     }
-    for (int i = 0; i < n && !stopping_; ++i) {
-      const auto& ev = events[i];
-      if (ev.filter == EVFILT_TIMER) {
-        tick_sessions();
-      } else if (ev.ident == static_cast<uintptr_t>(listen_fd_)) {
-        handle_accept();
-      } else if (ev.ident == static_cast<uintptr_t>(wake_pipe_[0])) {
+
+    for (const auto& ev : events) {
+      if (stopping_) break;
+      if (ev.fd == listen_fd_) {
+        if (ev.readable) handle_accept();
+      } else if (ev.fd == wake_pipe_[0]) {
         char buf[256];
         while (::read(wake_pipe_[0], buf, sizeof buf) > 0) {
         }
         pump_responses();
       } else {
-        const auto it = by_fd_.find(static_cast<int>(ev.ident));
+        auto it = by_fd_.find(ev.fd);
         if (it == by_fd_.end()) continue;
-        if (ev.filter == EVFILT_READ) {
+        if (ev.readable) {
           handle_readable(*it->second);
-        } else if (ev.filter == EVFILT_WRITE) {
-          handle_writable(*it->second);
+          it = by_fd_.find(ev.fd);  // handle_readable may have closed it
+          if (it == by_fd_.end()) continue;
         }
+        if (ev.writable) handle_writable(*it->second);
       }
     }
   }
 
-  for (auto& [id, conn] : conns_) ::close(conn->fd);
+  for (auto& [id, conn] : conns_) {
+    poller_.remove(conn->fd);
+    ::close(conn->fd);
+  }
   conns_.clear();
   by_fd_.clear();
-  ::close(kq_);
-  kq_ = -1;
 }
 
 void Gateway::handle_accept() {
@@ -187,10 +187,7 @@ void Gateway::handle_accept() {
     const std::uint64_t id = next_client_id_++;
     auto conn = std::make_unique<Conn>(*this, fd, id, ns_since_midnight());
     by_fd_[fd] = conn.get();
-    struct kevent ev;
-    EV_SET(&ev, static_cast<uintptr_t>(fd), EVFILT_READ, EV_ADD, 0, 0,
-           nullptr);
-    ::kevent(kq_, &ev, 1, nullptr, 0, nullptr);
+    poller_.add_read(fd);
     conns_.emplace(id, std::move(conn));
   }
 }
@@ -235,7 +232,8 @@ void Gateway::handle_ouch(Conn& conn, const std::uint8_t* data,
     case 'O': {
       const auto m = ouch::decode_enter_order(data, n);
       if (!m) return;
-      if (m->shares > kMaxOrderShares || m->price > kMaxOrderPrice)
+      const bool market = m->price == ouch::kMarketPrice;
+      if (m->shares > kMaxOrderShares || (!market && m->price > kMaxOrderPrice))
         return reject(m->token);
       to_engine_.push({conn.id, *m});
       break;
@@ -304,16 +302,15 @@ void Gateway::handle_writable(Conn& conn) { flush(conn); }
 
 void Gateway::update_write_filter(Conn& conn, bool enable) {
   if (enable == conn.write_enabled) return;
-  struct kevent ev;
-  EV_SET(&ev, static_cast<uintptr_t>(conn.fd), EVFILT_WRITE,
-         enable ? EV_ADD : EV_DELETE, 0, 0, nullptr);
-  ::kevent(kq_, &ev, 1, nullptr, 0, nullptr);
+  poller_.set_write(conn.fd, enable);
   conn.write_enabled = enable;
 }
 
 void Gateway::close_conn(Conn& conn) {
-  ::close(conn.fd);  // closing the fd removes its kqueue filters
-  by_fd_.erase(conn.fd);
+  const int fd = conn.fd;
+  poller_.remove(fd);  // deregister before close so the fd is safe to reuse
+  ::close(fd);
+  by_fd_.erase(fd);
   conns_.erase(conn.id);  // destroys conn — do not touch it after this
 }
 

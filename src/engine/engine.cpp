@@ -1,6 +1,10 @@
 #include "engine/engine.hpp"
 
 #include "common/clock.hpp"
+#include "common/cpu.hpp"
+
+#include <cstdio>
+#include <limits>
 
 namespace nsq::engine {
 
@@ -10,14 +14,37 @@ std::string token_str(const ouch::Token& t) {
 }
 }  // namespace
 
-void Engine::start() {
-  thread_ = std::thread([this] {
+void Engine::start(RunConfig cfg) {
+  cfg_ = cfg;
+  thread_ = std::thread([this] { run_loop(); });
+}
+
+void Engine::run_loop() {
+  if (cfg_.lock_memory && !lock_all_memory())
+    std::fputs("engine: mlockall failed (continuing unlocked)\n", stderr);
+  if (cfg_.pin_core >= 0 && !pin_thread_to_core(cfg_.pin_core))
+    std::fprintf(stderr, "engine: core pinning unavailable on this OS\n");
+
+  if (!in_.lock_free()) {
+    // Blocking: sleep on the condition variable until work or shutdown.
     for (;;) {
       auto cmds = in_.wait_drain();
       if (cmds.empty()) return;  // stopped
       for (const auto& cmd : cmds) process(cmd);
     }
-  });
+  }
+
+  // Busy-poll the lock-free ring: a producer's push is observed without any
+  // scheduler wakeup, and the spinning consumer never touches a lock the
+  // producer needs. Check the stop flag only when the ring runs dry.
+  for (;;) {
+    if (auto cmd = in_.try_pop()) {
+      process(*cmd);
+    } else {
+      if (in_.stopped()) return;
+      cpu_relax();
+    }
+  }
 }
 
 void Engine::stop() {
@@ -69,8 +96,9 @@ void Engine::reduce_open(OrderId id, Qty by) {
 }
 
 void Engine::handle(std::uint64_t client, const ouch::EnterOrder& m) {
+  const bool market = (m.price == ouch::kMarketPrice);
   if (token_used(client, m.token)) return reject(client, m.token, 'T');
-  if (m.price <= 0) return reject(client, m.token, 'X');
+  if (!market && m.price <= 0) return reject(client, m.token, 'X');
   if (m.shares == 0) return reject(client, m.token, 'Z');
   if (m.side != Side::Buy && m.side != Side::Sell)
     return reject(client, m.token, 'S');
@@ -100,7 +128,40 @@ void Engine::handle(std::uint64_t client, const ouch::EnterOrder& m) {
   acc.order_state = 'L';
   to_gateway_.push({client, acc});
 
-  book_for(m.stock).add(ref, m.side, m.price, m.shares);
+  FastBook& book = book_for(m.stock);
+
+  // A market order has no limit; use an extreme so every resting price crosses.
+  const Price limit =
+      market ? (m.side == Side::Buy ? std::numeric_limits<Price>::max() : 1)
+             : m.price;
+  const bool ioc = market || m.tif == ouch::kTifIOC;
+
+  // Minimum-quantity gate: if fewer than min_qty shares can execute right
+  // now, the whole order is killed without touching the book. Combined with
+  // an IOC/market order and min_qty == shares this yields fill-or-kill.
+  if (m.min_qty > 0 && book.matchable(m.side, limit) < m.min_qty)
+    return cancel_unrested(client, ref, m.token, m.shares, 'D');
+
+  if (ioc) {
+    const Qty filled = book.execute_ioc(ref, m.side, limit, m.shares);
+    const Qty remainder = m.shares - filled;
+    if (remainder > 0) cancel_unrested(client, ref, m.token, remainder, 'I');
+    return;
+  }
+
+  book.add(ref, m.side, m.price, m.shares);
+}
+
+void Engine::cancel_unrested(std::uint64_t client, OrderId ref,
+                             const ouch::Token& token, Qty qty, char reason) {
+  ouch::Canceled c{};
+  c.timestamp = now_;
+  c.token = token;
+  c.decrement_shares = qty;
+  c.reason = reason;  // 'I' immediate-or-cancel remainder, 'D' min-qty unmet
+  to_gateway_.push({client, c});
+  live_tokens_.erase({client, token_str(token)});
+  orders_.erase(ref);
 }
 
 void Engine::handle(std::uint64_t client, const ouch::CancelOrder& m) {

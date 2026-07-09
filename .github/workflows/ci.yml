@@ -6,17 +6,41 @@ on:
 jobs:
   test:
     name: ${{ matrix.name }}
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: release
+          # macOS (kqueue event loop)
+          - name: macos-release
+            os: macos-latest
             cmake_flags: -DCMAKE_BUILD_TYPE=Release
-          - name: asan-ubsan
+          - name: macos-asan-ubsan
+            os: macos-latest
             cmake_flags: -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_ADDRESS=ON
-          - name: tsan
+          - name: macos-tsan
+            os: macos-latest
             cmake_flags: -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_THREAD=ON
+          # Linux (epoll event loop), built with Clang to match the primary
+          # Apple Clang toolchain under -Wconversion -Werror.
+          - name: linux-release
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            cmake_flags: -DCMAKE_BUILD_TYPE=Release
+          - name: linux-asan-ubsan
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            cmake_flags: -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_ADDRESS=ON
+          - name: linux-tsan
+            os: ubuntu-latest
+            cc: clang
+            cxx: clang++
+            cmake_flags: -DCMAKE_BUILD_TYPE=Debug -DSANITIZE_THREAD=ON
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
     steps:
       - uses: actions/checkout@v4
       - name: Cache GoogleTest

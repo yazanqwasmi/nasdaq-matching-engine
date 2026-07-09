@@ -11,6 +11,7 @@
 
 #include "common/queue.hpp"
 #include "engine/engine.hpp"
+#include "gateway/poller.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -29,7 +30,7 @@ inline constexpr Price kMaxOrderPrice = 1'999'999'900;  // $199,999.99
 class Gateway {
  public:
   // port 0 binds an ephemeral port; see port().
-  Gateway(std::uint16_t port, MpscQueue<engine::Command>& to_engine,
+  Gateway(std::uint16_t port, engine::CommandChannel& to_engine,
           MpscQueue<engine::ClientResponse>& from_engine);
   ~Gateway();
 
@@ -52,11 +53,11 @@ class Gateway {
   void update_write_filter(Conn& conn, bool enable);
 
   std::uint16_t port_;
-  MpscQueue<engine::Command>& to_engine_;
+  engine::CommandChannel& to_engine_;
   MpscQueue<engine::ClientResponse>& from_engine_;
 
+  Poller poller_;
   int listen_fd_ = -1;
-  int kq_ = -1;
   int wake_pipe_[2] = {-1, -1};
   std::uint64_t next_client_id_ = 1;
   std::unordered_map<std::uint64_t, std::unique_ptr<Conn>> conns_;

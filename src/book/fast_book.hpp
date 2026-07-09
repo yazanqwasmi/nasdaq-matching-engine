@@ -37,6 +37,16 @@ class FastBook {
   bool cancel(OrderId id, Qty keep_qty = 0);
   bool replace(OrderId old_id, OrderId new_id, Price new_price, Qty new_qty);
 
+  // Total opposite-side quantity an incoming `side` order priced at `limit`
+  // would immediately execute against. Read-only (no events, no mutation);
+  // used to gate minimum-quantity / fill-or-kill orders before entry.
+  Qty matchable(Side side, Price limit) const;
+
+  // Execute an incoming order against the book without resting any remainder
+  // (immediate-or-cancel / market semantics). Emits ExecutedEvents for the
+  // fills but never an AddedEvent. Returns the quantity filled.
+  Qty execute_ioc(OrderId id, Side side, Price limit, Qty qty);
+
   bool contains(OrderId id) const { return index_.contains(id); }
   std::optional<Price> best_bid() const;
   std::optional<Price> best_ask() const;

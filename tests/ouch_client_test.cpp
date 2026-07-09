@@ -26,7 +26,7 @@ struct Recorder : OuchClient::Handler {
 
 class OuchClientTest : public ::testing::Test {
  protected:
-  engine::MpscQueue<engine::Command> to_engine;
+  engine::CommandChannel to_engine;
   engine::MpscQueue<engine::ClientResponse> to_gateway;
   engine::MpscQueue<engine::MarketEvent> to_feed;
   engine::Engine engine{to_engine, to_gateway, to_feed};

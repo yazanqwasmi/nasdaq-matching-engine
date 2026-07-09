@@ -24,6 +24,18 @@ namespace nsq::ouch {
 using Token = std::array<char, 14>;
 using Firm = std::array<char, 4>;
 
+// Time-in-force well-known values (the EnterOrder `tif` field, in seconds).
+// 0 = immediate-or-cancel: match what is available now and cancel the rest,
+// never resting. 99999 = remain until end of market hours (a day order).
+// Timed values in between are treated as day orders in this subset.
+inline constexpr std::uint32_t kTifIOC = 0;
+inline constexpr std::uint32_t kTifDay = 99999;
+
+// Sentinel `price` denoting a market order (no limit): fill against any
+// resting price and cancel the remainder. A market order is inherently
+// immediate-or-cancel. Matches NASDAQ's 0x7FFFFFFF market-price convention.
+inline constexpr Price kMarketPrice = 0x7FFFFFFF;
+
 inline Token make_token(std::string_view sv) {
   Token t;
   t.fill(' ');

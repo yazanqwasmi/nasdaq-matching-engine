@@ -1,8 +1,9 @@
 // Benchmark harness. Run from a Release build:
 //   book    — FastBook vs reference throughput + FastBook per-op latency
 //   queue   — MpscQueue vs SpscRing cross-thread hop latency
-//   e2e     — full stack over real sockets: OUCH enter -> Accepted RTT and
-//             enter -> ITCH datagram out
+//   e2e     — full stack over real sockets, open-loop / coordinated-omission-
+//             corrected: enter -> Accepted latency with the engine consuming
+//             its queue in blocking vs busy-poll (low-latency) mode
 // Default runs all three.
 #include "book/fast_book.hpp"
 #include "book/order_book.hpp"
@@ -184,16 +185,25 @@ void bench_queue() {
   }
 }
 
-struct RttHandler : client::OuchClient::Handler {
-  std::uint64_t accepted = 0;
-  void on_accepted(const ouch::Accepted&) override { ++accepted; }
+// Records enter->Accepted latency measured from each order's *intended* send
+// time, so a stall shows up as latency on every backed-up order rather than
+// vanishing (coordinated-omission-correct). Accepted come back in send order.
+struct OpenLoopHandler : client::OuchClient::Handler {
+  const std::vector<std::uint64_t>* intended = nullptr;
+  LatencyHistogram* hist = nullptr;
+  std::size_t recv = 0;
+  void on_accepted(const ouch::Accepted&) override {
+    // hist is null during warmup: just count acks so the caller can pace.
+    if (hist) hist->record(now_ns() - (*intended)[recv]);
+    ++recv;
+  }
 };
 
-void bench_e2e() {
-  std::puts(
-      "\n== end-to-end: OUCH enter -> Accepted RTT and -> ITCH out "
-      "(10k orders over real sockets) ==");
-  // UDP receiver for the feed.
+// One open-loop run at a fixed offered rate. `busy_poll` selects the engine's
+// low-latency consumer. Orders are emitted on a fixed schedule regardless of
+// how fast acks return; latency is arrival minus the scheduled send time.
+void run_openloop_e2e(const char* label, bool busy_poll, std::uint64_t rate_hz,
+                      int n) {
   const int rx = ::socket(AF_INET, SOCK_DGRAM, 0);
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
@@ -201,10 +211,10 @@ void bench_e2e() {
   ::bind(rx, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
   socklen_t alen = sizeof addr;
   ::getsockname(rx, reinterpret_cast<sockaddr*>(&addr), &alen);
-  timeval tv{1, 0};
-  ::setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+  int rcvbuf = 1 << 20;  // absorb feed datagrams we don't read
+  ::setsockopt(rx, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
 
-  MpscQueue<engine::Command> to_engine;
+  engine::CommandChannel to_engine{busy_poll};  // lock-free ring in LL mode
   MpscQueue<engine::ClientResponse> to_gateway;
   MpscQueue<engine::MarketEvent> to_feed;
   engine::Engine eng{to_engine, to_gateway, to_feed};
@@ -213,39 +223,69 @@ void bench_e2e() {
   fcfg.dest_ip = "127.0.0.1";
   fcfg.dest_port = ntohs(addr.sin_port);
   feed::FeedPublisher pub{to_feed, fcfg};
-  eng.start();
+
+  eng.start();  // pinning/mlock are Linux concerns; left off on this host
   gw.start();
   pub.start();
 
-  RttHandler handler;
+  OpenLoopHandler handler;
   client::OuchClient c{handler};
   if (!c.connect("127.0.0.1", gw.port(), "BENCH", "PW")) {
     std::puts("  connect failed");
     return;
   }
 
-  LatencyHistogram rtt, itch_out;
-  std::uint8_t buf[2048];
-  for (int i = 0; i < 10'000; ++i) {
-    // Alternate sides at the same price so every second order trades.
+  // Warm up the connection, book, and caches (not recorded).
+  for (int i = 0; i < 5'000; ++i) {
     const Side side = (i & 1) ? Side::Buy : Side::Sell;
-    const std::uint64_t t0 = now_ns();
-    c.enter("B" + std::to_string(i), side, "AAPL", make_price(100, 0), 100);
-    const std::uint64_t want = handler.accepted + 1;
-    while (handler.accepted < want) c.poll();
-    rtt.record(now_ns() - t0);
-    // The resting add (or execution) also hits the feed.
-    const ssize_t n = ::recvfrom(rx, buf, sizeof buf, 0, nullptr, nullptr);
-    if (n > 0) itch_out.record(now_ns() - t0);
+    c.enter("W" + std::to_string(i), side, "AAPL", make_price(100, 0), 100);
+    const std::size_t want = handler.recv + 1;
+    while (handler.recv < want) c.poll();
   }
-  std::printf("  %s\n", rtt.summary("enter -> Accepted RTT").c_str());
-  std::printf("  %s\n", itch_out.summary("enter -> ITCH datagram").c_str());
+
+  std::vector<std::uint64_t> intended(static_cast<std::size_t>(n));
+  LatencyHistogram rtt;
+  handler.intended = &intended;
+  handler.hist = &rtt;
+  handler.recv = 0;
+
+  const std::uint64_t interval = 1'000'000'000ull / rate_hz;
+  const std::uint64_t start = now_ns() + 1'000'000;  // 1ms lead-in
+  for (int i = 0; i < n; ++i)
+    intended[static_cast<std::size_t>(i)] =
+        start + static_cast<std::uint64_t>(i) * interval;
+
+  int sent = 0;
+  while (handler.recv < static_cast<std::size_t>(n)) {
+    const std::uint64_t now = now_ns();
+    while (sent < n &&
+           now >= intended[static_cast<std::size_t>(sent)]) {
+      const Side side = (sent & 1) ? Side::Buy : Side::Sell;
+      c.enter("B" + std::to_string(sent), side, "AAPL", make_price(100, 0),
+              100);
+      ++sent;
+    }
+    c.poll();
+  }
+
+  std::printf("  %s\n", rtt.summary(label).c_str());
 
   c.close();
   gw.stop();
   eng.stop();
   pub.stop();
   ::close(rx);
+}
+
+void bench_e2e() {
+  constexpr std::uint64_t kRate = 50'000;  // orders/sec offered, open loop
+  constexpr int kOrders = 100'000;
+  std::printf(
+      "\n== end-to-end: enter -> Accepted latency, open loop @ %lluk "
+      "orders/sec (coordinated-omission-corrected) ==\n",
+      static_cast<unsigned long long>(kRate / 1000));
+  run_openloop_e2e("blocking engine", false, kRate, kOrders);
+  run_openloop_e2e("busy-poll engine", true, kRate, kOrders);
 }
 
 }  // namespace

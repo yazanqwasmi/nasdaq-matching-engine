@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(nasdaq_sim_cpp CXX)
+project(nasdaq_matching_engine CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,9 +33,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 # Header-only common library.
 add_library(nsq_common INTERFACE)
 target_include_directories(nsq_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(nsq_common INTERFACE Threads::Threads)
 
 add_library(nsq_book STATIC src/book/order_book.cpp src/book/fast_book.cpp)
 target_link_libraries(nsq_book PUBLIC nsq_common)
@@ -49,7 +53,7 @@ target_link_libraries(nsq_mold PUBLIC nsq_common)
 add_library(nsq_engine STATIC src/engine/engine.cpp)
 target_link_libraries(nsq_engine PUBLIC nsq_book)
 
-add_library(nsq_gateway STATIC src/gateway/gateway.cpp)
+add_library(nsq_gateway STATIC src/gateway/gateway.cpp src/gateway/poller.cpp)
 target_link_libraries(nsq_gateway PUBLIC nsq_engine nsq_soup)
 
 add_library(nsq_feed STATIC src/feed/feed.cpp src/feed/capture.cpp)
