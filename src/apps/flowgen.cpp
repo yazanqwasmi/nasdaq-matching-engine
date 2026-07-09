@@ -13,11 +13,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -137,14 +139,12 @@ int main(int argc, char** argv) {
     }
     (void)!::send(fd, out.data(), out.size(), 0);
     pump();
-    struct timespec ts {0, 200'000};  // 200us pacing
-    nanosleep(&ts, nullptr);
+    std::this_thread::sleep_for(std::chrono::microseconds(200));  // pacing
   }
 
   // Give the exchange a beat to finish responding, then drain.
   for (int i = 0; i < 20; ++i) {
-    struct timespec ts {0, 50'000'000};
-    nanosleep(&ts, nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     pump();
   }
 

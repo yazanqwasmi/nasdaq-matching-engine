@@ -5,10 +5,12 @@
 #include "feed/feed.hpp"
 #include "gateway/gateway.hpp"
 
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 namespace {
 volatile std::sig_atomic_t g_stop = 0;
@@ -64,8 +66,7 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_sigint);
   std::signal(SIGTERM, on_sigint);
   while (!g_stop) {
-    struct timespec ts {0, 100'000'000};
-    nanosleep(&ts, nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
   std::puts("exchanged: shutting down");
