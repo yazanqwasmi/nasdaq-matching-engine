@@ -4,7 +4,9 @@
 //   e2e     — full stack over real sockets, open-loop / coordinated-omission-
 //             corrected: enter -> Accepted latency with the engine consuming
 //             its queue in blocking vs busy-poll (low-latency) mode
-// Default runs all three.
+//   perf    — isolated FastBook matching hot loop as a `perf stat` target
+//             (Linux; see scripts/perf-engine.sh). Not part of `all`.
+// With no argument, runs book + queue + e2e.
 #include "book/fast_book.hpp"
 #include "book/order_book.hpp"
 #include "client/ouch_client.hpp"
@@ -288,6 +290,30 @@ void bench_e2e() {
   run_openloop_e2e("busy-poll engine", true, kRate, kOrders);
 }
 
+// Isolated matching-engine hot loop, intended to be wrapped in `perf stat`
+// (see scripts/perf-engine.sh). A mixed add/cancel/replace/match stream is
+// prebuilt once, then replayed on fresh FastBooks so the measured region is
+// pure matching — no I/O, no timing calls, no reference book, and (in steady
+// state) no heap allocation. Replaying amortizes setup to noise so the hot
+// path dominates the counters.
+void bench_perf() {
+  constexpr int kReplays = 15;  // ~30M ops => ~1-2s hot loop to profile
+  const auto ops = make_ops(2'000'000);
+  BookListener sink;
+  double secs = 0;
+  std::uint64_t total = 0;
+  for (int r = 0; r < kReplays; ++r) {
+    FastBook fast{sink};
+    secs += run_ops(fast, ops);
+    total += ops.size();
+  }
+  std::printf(
+      "perf: %llu FastBook ops in %.2fs (%.1fM ops/sec) — wrap this run in "
+      "`perf stat` via scripts/perf-engine.sh\n",
+      static_cast<unsigned long long>(total), secs,
+      static_cast<double>(total) / secs / 1e6);
+}
+
 }  // namespace
 }  // namespace nsq
 
@@ -296,5 +322,6 @@ int main(int argc, char** argv) {
   if (mode == "book" || mode == "all") nsq::bench_book();
   if (mode == "queue" || mode == "all") nsq::bench_queue();
   if (mode == "e2e" || mode == "all") nsq::bench_e2e();
+  if (mode == "perf") nsq::bench_perf();  // perf-stat target; not in `all`
   return 0;
 }

@@ -278,6 +278,23 @@ default stays blocking (simple shutdown, polite CPU); LL mode is one flag away
 when the queue is the bottleneck, and now it's wired and measured, not
 promised.
 
+**Microarchitecture (`perf`).** Throughput is a consequence of cache and
+branch behaviour, so the hot path is measured there too. `bench perf` is an
+isolated FastBook add/cancel/replace/match loop (~30M ops, no I/O or timing in
+the measured region, allocation-free at steady state), and
+`scripts/perf-engine.sh` wraps it in `perf stat` pinned to one core:
+
+```sh
+scripts/perf-engine.sh                 # Linux, bare metal
+```
+
+It reports IPC (instructions/cycle), last-level and L1-D cache-miss rates, and
+branch-misprediction rate — the numbers that *explain* the ~21M ops/sec rather
+than just restating it, and the ones a reviewer uses to sanity-check that a
+contiguous ladder + pooled orders really is cache-friendly. Run it on real
+hardware: cloud VMs and CI runners don't expose the PMU, so the hardware
+counters read `<not supported>` there.
+
 ## Testing strategy
 
 - **Golden bytes**: every codec tested against hand-computed layouts with
@@ -307,6 +324,7 @@ src/engine/   matching service          src/gateway/  kqueue/epoll TCP gateway
 src/feed/     ITCH publisher + capture  src/client/   book builder, OUCH client
 src/apps/     exchanged, marketsim, flowgen, itchview, itchlisten, itchreplay, bench, demo
 tests/        113 tests (GoogleTest)
+scripts/      perf-engine.sh (perf-stat hot-loop profiler)
 docs/         design document
 ```
 
